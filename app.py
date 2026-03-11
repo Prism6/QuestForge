@@ -5,10 +5,18 @@ QuestForge - AI 퀘스트 생성기
 """
 
 import os
+import logging
 import streamlit as st
 from utils.quest_generator import QuestGenerator
 from utils.data_exporter import DataExporter
 
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 # 페이지 설정
 st.set_page_config(
@@ -17,6 +25,54 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# 커스텀 CSS
+st.markdown("""
+<style>
+    /* 전체 배경 */
+    .main .block-container {
+        padding-top: 1.5rem;
+    }
+
+    /* 퀘스트 미리보기 카드 */
+    .quest-description-card {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border-left: 4px solid #e94560;
+        border-radius: 8px;
+        padding: 1rem 1.2rem;
+        margin-bottom: 1rem;
+        color: #e0e0e0;
+        font-style: italic;
+        line-height: 1.6;
+    }
+
+    /* 난이도 색상 배지 */
+    .diff-1 { color: #4caf50; font-weight: bold; }
+    .diff-2 { color: #8bc34a; font-weight: bold; }
+    .diff-3 { color: #ffc107; font-weight: bold; }
+    .diff-4 { color: #ff5722; font-weight: bold; }
+    .diff-5 { color: #f44336; font-weight: bold; }
+
+    /* 섹션 구분선 */
+    .section-divider {
+        border: none;
+        border-top: 1px solid #333;
+        margin: 1rem 0;
+    }
+
+    /* 퀘스트 타입 뱃지 */
+    .quest-type-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: bold;
+        background-color: #0f3460;
+        color: #e94560;
+        border: 1px solid #e94560;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 def init_session_state():
@@ -33,9 +89,11 @@ def init_session_state():
                 # 환경변수에서 가져오기
                 api_key = os.getenv("ANTHROPIC_API_KEY")
             st.session_state.generator = QuestGenerator(api_key=api_key)
+            logger.info("QuestForge 앱 초기화 완료")
         except Exception as e:
             st.session_state.generator = None
             st.session_state.init_error = str(e)
+            logger.error("QuestForge 초기화 실패: %s", str(e))
 
 
 def display_sidebar():
@@ -115,6 +173,12 @@ def display_sidebar():
         }
 
 
+DIFFICULTY_COLORS = {1: "🟢", 2: "🟡", 3: "🟠", 4: "🔴", 5: "💀"}
+QUEST_TYPE_KO = {
+    "main": "메인", "sub": "서브", "daily": "일일", "repeatable": "반복"
+}
+
+
 def display_quest(quest_data):
     """퀘스트 데이터 표시"""
     if not quest_data:
@@ -122,16 +186,28 @@ def display_quest(quest_data):
         return
 
     # 퀘스트 헤더
+    diff = quest_data.get("difficulty", 0)
+    diff_icon = DIFFICULTY_COLORS.get(diff, "⭐")
     st.header(f"🎯 {quest_data.get('quest_name', '퀘스트 이름 없음')}")
+
+    # 퀘스트 미리보기 (description)
+    description = quest_data.get("description", "")
+    if description:
+        st.markdown(
+            f'<div class="quest-description-card">📖 {description}</div>',
+            unsafe_allow_html=True
+        )
 
     # 기본 정보
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("장르", quest_data.get("genre", "-"))
     with col2:
-        st.metric("타입", quest_data.get("quest_type", "-"))
+        quest_type_en = quest_data.get("quest_type", "-")
+        quest_type_display = QUEST_TYPE_KO.get(quest_type_en, quest_type_en)
+        st.metric("타입", quest_type_display)
     with col3:
-        difficulty_stars = "⭐" * quest_data.get("difficulty", 0)
+        difficulty_stars = f"{diff_icon} {'★' * diff}{'☆' * (5 - diff)}"
         st.metric("난이도", difficulty_stars)
     with col4:
         st.metric("보상 골드", f"{quest_data.get('rewards', {}).get('gold', 0):,}")

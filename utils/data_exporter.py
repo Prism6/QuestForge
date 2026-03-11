@@ -9,6 +9,7 @@ from typing import Dict, List
 from datetime import datetime
 import pandas as pd
 from io import BytesIO
+from openpyxl.utils import get_column_letter
 
 
 class DataExporter:
@@ -51,6 +52,7 @@ class DataExporter:
                 "difficulty": quest.get("difficulty", 0),
                 "genre": quest.get("genre", ""),
                 "theme": quest.get("theme", ""),
+                "description": quest.get("description", ""),
                 "npc_name": quest.get("npc", {}).get("name", ""),
                 "npc_location": quest.get("npc", {}).get("location", ""),
                 "objective_type": quest.get("objective", {}).get("type", ""),
@@ -79,6 +81,7 @@ class DataExporter:
             "difficulty",
             "genre",
             "theme",
+            "description",
             "npc_name",
             "npc_location",
             "objective_type",
@@ -115,7 +118,8 @@ class DataExporter:
                 )
                 # 최대 너비 제한
                 max_length = min(max_length, 50)
-                worksheet.column_dimensions[chr(65 + idx)].width = max_length + 2
+                col_letter = get_column_letter(idx + 1)
+                worksheet.column_dimensions[col_letter].width = max_length + 2
 
         output.seek(0)
         return output

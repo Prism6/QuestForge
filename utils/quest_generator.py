@@ -5,10 +5,14 @@ Claude API를 사용하여 퀘스트를 생성합니다.
 """
 
 import os
+import re
 import json
+import logging
 from typing import Dict, Optional
 from anthropic import Anthropic
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 from .prompts import create_quest_prompt, create_regeneration_prompt
 
@@ -39,6 +43,7 @@ class QuestGenerator:
 
         self.client = Anthropic(api_key=self.api_key)
         self.model = "claude-sonnet-4-20250514"
+        logger.info("QuestGenerator 초기화 완료 (모델: %s)", self.model)
 
     def generate_quest(
         self,
@@ -62,9 +67,12 @@ class QuestGenerator:
         Raises:
             Exception: API 호출 실패 또는 JSON 파싱 실패 시
         """
+        response_text = ""
         try:
             # 프롬프트 생성
             prompt = create_quest_prompt(genre, theme, difficulty, quest_type)
+            logger.info("퀘스트 생성 요청 - 장르: %s, 테마: %s, 난이도: %d, 타입: %s",
+                        genre, theme, difficulty, quest_type)
 
             # Claude API 호출
             response = self.client.messages.create(
@@ -78,6 +86,7 @@ class QuestGenerator:
 
             # 응답 텍스트 추출
             response_text = response.content[0].text
+            logger.info("API 응답 수신 (길이: %d자)", len(response_text))
 
             # JSON 파싱
             quest_data = self._parse_json_response(response_text)
@@ -86,11 +95,14 @@ class QuestGenerator:
             quest_data["genre"] = genre
             quest_data["theme"] = theme
 
+            logger.info("퀘스트 생성 성공: %s", quest_data.get("quest_name", ""))
             return quest_data
 
         except json.JSONDecodeError as e:
+            logger.error("JSON 파싱 실패: %s\n응답: %s", str(e), response_text[:200])
             raise Exception(f"JSON 파싱 실패: {str(e)}\n응답: {response_text}")
         except Exception as e:
+            logger.error("퀘스트 생성 실패: %s", str(e))
             raise Exception(f"퀘스트 생성 실패: {str(e)}")
 
     def regenerate_quest(
@@ -111,9 +123,11 @@ class QuestGenerator:
         Raises:
             Exception: API 호출 실패 또는 JSON 파싱 실패 시
         """
+        response_text = ""
         try:
             # 재생성 프롬프트 생성
             prompt = create_regeneration_prompt(original_quest, feedback)
+            logger.info("퀘스트 재생성 요청 - 원본: %s", original_quest.get("quest_name", ""))
 
             # Claude API 호출
             response = self.client.messages.create(
@@ -127,6 +141,7 @@ class QuestGenerator:
 
             # 응답 텍스트 추출
             response_text = response.content[0].text
+            logger.info("재생성 API 응답 수신 (길이: %d자)", len(response_text))
 
             # JSON 파싱
             quest_data = self._parse_json_response(response_text)
@@ -135,16 +150,22 @@ class QuestGenerator:
             quest_data["genre"] = original_quest.get("genre", "")
             quest_data["theme"] = original_quest.get("theme", "")
 
+            logger.info("퀘스트 재생성 성공: %s", quest_data.get("quest_name", ""))
             return quest_data
 
         except json.JSONDecodeError as e:
+            logger.error("재생성 JSON 파싱 실패: %s\n응답: %s", str(e), response_text[:200])
             raise Exception(f"JSON 파싱 실패: {str(e)}\n응답: {response_text}")
         except Exception as e:
+            logger.error("퀘스트 재생성 실패: %s", str(e))
             raise Exception(f"퀘스트 재생성 실패: {str(e)}")
 
     def _parse_json_response(self, response_text: str) -> Dict:
         """
         Claude 응답에서 JSON을 추출하고 파싱합니다.
+
+        응답에 마크다운 코드 블록이나 부가 설명이 포함되어 있어도
+        JSON 객체를 정확히 추출합니다.
 
         Args:
             response_text: Claude API 응답 텍스트
@@ -155,20 +176,27 @@ class QuestGenerator:
         Raises:
             json.JSONDecodeError: JSON 파싱 실패 시
         """
-        # 응답에서 JSON 부분만 추출 (마크다운 코드 블록 제거)
         text = response_text.strip()
 
-        # ```json ... ``` 형태 제거
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
+        # 1차: 코드 블록 내 JSON 추출 (```json ... ``` 또는 ``` ... ```)
+        json_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
+        if json_block_match:
+            text = json_block_match.group(1).strip()
+            logger.debug("코드 블록에서 JSON 추출 성공")
+            return json.loads(text)
 
+        # 2차: 코드 블록 마커만 제거
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
         text = text.strip()
 
-        # JSON 파싱
+        # 3차: 앞뒤 텍스트를 제거하고 JSON 객체 범위만 추출
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            text = text[start:end + 1]
+            logger.debug("텍스트에서 JSON 객체 범위 추출 (start=%d, end=%d)", start, end)
+
         return json.loads(text)
 
     def validate_quest_data(self, quest_data: Dict) -> bool:
