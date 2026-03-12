@@ -7,29 +7,16 @@ Claude API에 전달할 프롬프트를 생성합니다.
 from typing import Dict
 
 
-def create_quest_prompt(genre: str, theme: str, difficulty: int, quest_type: str) -> str:
+class PromptBuilder:
     """
-    퀘스트 생성을 위한 프롬프트를 생성합니다.
+    퀘스트 생성 프롬프트를 빌드하는 클래스.
 
-    Args:
-        genre: 게임 장르 (예: RPG, 액션, 시뮬레이션, 어드벤처)
-        theme: 테마/세계관 (예: 중세 판타지 왕국)
-        difficulty: 난이도 (1~5)
-        quest_type: 퀘스트 타입 (메인, 서브, 일일, 반복)
-
-    Returns:
-        str: 생성된 프롬프트
+    장르·타입 매핑을 클래스 상수로 관리하여 확장 시
+    이 클래스만 수정하면 앱 전체에 반영됩니다.
     """
-    quest_type_ko_to_en = {
-        "메인": "main",
-        "서브": "sub",
-        "일일": "daily",
-        "반복": "repeatable"
-    }
 
-    quest_type_en = quest_type_ko_to_en.get(quest_type, quest_type.lower())
-
-    genre_tone_guide = {
+    # 장르별 톤 가이드 (OCP: 장르 추가 시 이 상수만 수정)
+    GENRE_TONE_GUIDE: Dict[str, str] = {
         "RPG": "고전적인 판타지 서사, 영웅의 여정, 선악 구도",
         "액션": "긴박한 전투 상황, 짧고 강렬한 대사, 즉각적인 보상",
         "시뮬레이션": "일상적이고 현실적인 문제, 경제/관계 중심, 차분한 톤",
@@ -37,9 +24,40 @@ def create_quest_prompt(genre: str, theme: str, difficulty: int, quest_type: str
         "MMORPG": "대규모 세계관, 길드/파티 요소, 반복 플레이를 고려한 보상",
         "로그라이크": "절차적 생성 느낌, 간결한 설명, 높은 위험/높은 보상",
     }
-    tone_guide = genre_tone_guide.get(genre, "장르에 맞는 분위기")
 
-    prompt = f"""당신은 게임 퀘스트 디자이너입니다.
+    # 한국어 → 영어 타입 매핑
+    QUEST_TYPE_KO_TO_EN: Dict[str, str] = {
+        "메인": "main",
+        "서브": "sub",
+        "일일": "daily",
+        "반복": "repeatable",
+    }
+
+    # 영어 → 한국어 타입 매핑 (UI 표시용, KO_TO_EN의 역방향)
+    QUEST_TYPE_EN_TO_KO: Dict[str, str] = {
+        en: ko for ko, en in QUEST_TYPE_KO_TO_EN.items()
+    }
+
+    @classmethod
+    def create_quest_prompt(
+        cls, genre: str, theme: str, difficulty: int, quest_type: str
+    ) -> str:
+        """
+        퀘스트 생성을 위한 프롬프트를 생성합니다.
+
+        Args:
+            genre: 게임 장르 (GENRE_TONE_GUIDE 키 중 하나)
+            theme: 테마/세계관 (예: 중세 판타지 왕국)
+            difficulty: 난이도 (1~5)
+            quest_type: 퀘스트 타입 (QUEST_TYPE_KO_TO_EN 키 중 하나)
+
+        Returns:
+            str: 생성된 프롬프트
+        """
+        quest_type_en = cls.QUEST_TYPE_KO_TO_EN.get(quest_type, quest_type.lower())
+        tone_guide = cls.GENRE_TONE_GUIDE.get(genre, "장르에 맞는 분위기")
+
+        return f"""당신은 게임 퀘스트 디자이너입니다.
 
 다음 조건에 맞는 퀘스트를 생성해주세요:
 - 장르: {genre} ({tone_guide})
@@ -91,24 +109,26 @@ def create_quest_prompt(genre: str, theme: str, difficulty: int, quest_type: str
 7. JSON만 출력하고 다른 설명이나 마크다운은 하지 마세요
 """
 
-    return prompt
+    @classmethod
+    def create_regeneration_prompt(
+        cls, original_quest: Dict, feedback: str = ""
+    ) -> str:
+        """
+        기존 퀘스트를 기반으로 재생성 프롬프트를 생성합니다.
 
+        Args:
+            original_quest: 기존 퀘스트 데이터
+            feedback: 사용자 피드백 (선택사항)
 
-def create_regeneration_prompt(original_quest: Dict, feedback: str = "") -> str:
-    """
-    기존 퀘스트를 기반으로 재생성 프롬프트를 생성합니다.
+        Returns:
+            str: 재생성 프롬프트
+        """
+        difficulty = original_quest.get("difficulty", 3)
+        quest_type_en = original_quest.get("quest_type", "main")
 
-    Args:
-        original_quest: 기존 퀘스트 데이터
-        feedback: 사용자 피드백 (선택사항)
+        feedback_section = f"\n사용자 요청사항: {feedback}\n" if feedback else ""
 
-    Returns:
-        str: 재생성 프롬프트
-    """
-    difficulty = original_quest.get('difficulty', 3)
-    quest_type_en = original_quest.get('quest_type', 'main')
-
-    base_info = f"""당신은 게임 퀘스트 디자이너입니다.
+        return f"""당신은 게임 퀘스트 디자이너입니다.
 다음 퀘스트를 완전히 새로운 스토리와 내용으로 재생성해주세요.
 
 기존 퀘스트 정보 (난이도/타입은 유지, 나머지는 새롭게):
@@ -116,12 +136,7 @@ def create_regeneration_prompt(original_quest: Dict, feedback: str = "") -> str:
 - 장르/테마: {original_quest.get('genre', '')} / {original_quest.get('theme', '')}
 - 난이도: {difficulty}/5
 - 타입: {quest_type_en}
-"""
-
-    if feedback:
-        base_info += f"\n사용자 요청사항: {feedback}\n"
-
-    base_info += f"""
+{feedback_section}
 반드시 아래 JSON 구조로 출력하세요:
 {{
   "quest_name": "새로운 퀘스트 이름",
@@ -154,5 +169,3 @@ def create_regeneration_prompt(original_quest: Dict, feedback: str = "") -> str:
 
 JSON만 출력하고 다른 설명은 하지 마세요.
 """
-
-    return base_info

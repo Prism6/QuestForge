@@ -9,6 +9,7 @@ import logging
 import streamlit as st
 from utils.quest_generator import QuestGenerator
 from utils.data_exporter import DataExporter
+from utils.prompts import PromptBuilder
 
 # 로깅 설정
 logging.basicConfig(
@@ -74,6 +75,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# 난이도 아이콘 상수
+DIFFICULTY_COLORS = {1: "🟢", 2: "🟡", 3: "🟠", 4: "🔴", 5: "💀"}
+
+# 사이드바 옵션 — PromptBuilder 상수에서 파생하여 단일 출처(Single Source of Truth) 유지
+GENRE_OPTIONS = list(PromptBuilder.GENRE_TONE_GUIDE.keys())
+QUEST_TYPE_OPTIONS = list(PromptBuilder.QUEST_TYPE_KO_TO_EN.keys())
+
 
 def init_session_state():
     """세션 상태 초기화"""
@@ -103,10 +111,10 @@ def display_sidebar():
         st.markdown("**AI 퀘스트 생성기**")
         st.markdown("---")
 
-        # 장르 선택
+        # 장르 선택 — PromptBuilder.GENRE_TONE_GUIDE 키에서 자동 파생
         genre = st.selectbox(
             "📌 장르 선택",
-            ["RPG", "액션", "시뮬레이션", "어드벤처", "MMORPG", "로그라이크"],
+            GENRE_OPTIONS,
             help="게임의 장르를 선택하세요"
         )
 
@@ -126,10 +134,10 @@ def display_sidebar():
             help="난이도가 높을수록 보상이 증가합니다"
         )
 
-        # 퀘스트 타입
+        # 퀘스트 타입 — PromptBuilder.QUEST_TYPE_KO_TO_EN 키에서 자동 파생
         quest_type = st.selectbox(
             "📋 퀘스트 타입",
-            ["메인", "서브", "일일", "반복"],
+            QUEST_TYPE_OPTIONS,
             help="퀘스트의 유형을 선택하세요"
         )
 
@@ -173,12 +181,6 @@ def display_sidebar():
         }
 
 
-DIFFICULTY_COLORS = {1: "🟢", 2: "🟡", 3: "🟠", 4: "🔴", 5: "💀"}
-QUEST_TYPE_KO = {
-    "main": "메인", "sub": "서브", "daily": "일일", "repeatable": "반복"
-}
-
-
 def display_quest(quest_data):
     """퀘스트 데이터 표시"""
     if not quest_data:
@@ -204,7 +206,8 @@ def display_quest(quest_data):
         st.metric("장르", quest_data.get("genre", "-"))
     with col2:
         quest_type_en = quest_data.get("quest_type", "-")
-        quest_type_display = QUEST_TYPE_KO.get(quest_type_en, quest_type_en)
+        # PromptBuilder.QUEST_TYPE_EN_TO_KO 사용 (중복 딕셔너리 제거)
+        quest_type_display = PromptBuilder.QUEST_TYPE_EN_TO_KO.get(quest_type_en, quest_type_en)
         st.metric("타입", quest_type_display)
     with col3:
         difficulty_stars = f"{diff_icon} {'★' * diff}{'☆' * (5 - diff)}"
@@ -292,7 +295,6 @@ def main():
         else:
             with st.spinner("🔮 퀘스트를 생성하는 중..."):
                 try:
-                    # 퀘스트 생성
                     quest_data = st.session_state.generator.generate_quest(
                         genre=sidebar_data["genre"],
                         theme=sidebar_data["theme"],
@@ -300,13 +302,10 @@ def main():
                         quest_type=sidebar_data["quest_type"]
                     )
 
-                    # 검증
                     if st.session_state.generator.validate_quest_data(quest_data):
-                        # quest_id 생성 (히스토리 개수 기반)
                         quest_id = f"Q{len(st.session_state.quest_history) + 1:03d}"
                         quest_data["quest_id"] = quest_id
 
-                        # 현재 퀘스트 및 히스토리에 추가
                         st.session_state.current_quest = quest_data
                         st.session_state.quest_history.append(quest_data)
 
@@ -332,7 +331,6 @@ def main():
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            # JSON 다운로드
             json_data, json_filename, json_mime = DataExporter.create_download_data(
                 [st.session_state.current_quest],
                 "json"
@@ -346,7 +344,6 @@ def main():
             )
 
         with col2:
-            # Excel 다운로드 (전체 히스토리)
             if st.session_state.quest_history:
                 excel_data, excel_filename, excel_mime = DataExporter.create_download_data(
                     st.session_state.quest_history,
@@ -361,7 +358,6 @@ def main():
                 )
 
         with col3:
-            # 재생성 버튼
             if st.button("🔄 재생성", use_container_width=True):
                 with st.spinner("🔮 퀘스트를 재생성하는 중..."):
                     try:
@@ -369,13 +365,9 @@ def main():
                             st.session_state.current_quest
                         )
 
-                        # quest_id 유지
                         regenerated_quest["quest_id"] = st.session_state.current_quest.get("quest_id")
-
-                        # 현재 퀘스트 업데이트
                         st.session_state.current_quest = regenerated_quest
 
-                        # 히스토리에서 같은 ID 찾아서 업데이트
                         for i, quest in enumerate(st.session_state.quest_history):
                             if quest.get("quest_id") == regenerated_quest.get("quest_id"):
                                 st.session_state.quest_history[i] = regenerated_quest
@@ -388,7 +380,6 @@ def main():
                         st.error(f"❌ 재생성 실패: {str(e)}")
 
         with col4:
-            # 히스토리 초기화
             if st.button("🗑️ 히스토리 초기화", use_container_width=True):
                 st.session_state.quest_history = []
                 st.session_state.current_quest = None
@@ -396,7 +387,6 @@ def main():
                 st.rerun()
 
     else:
-        # 퀘스트가 없을 때
         display_quest(None)
 
 

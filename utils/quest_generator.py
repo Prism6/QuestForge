@@ -8,13 +8,13 @@ import os
 import re
 import json
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-from .prompts import create_quest_prompt, create_regeneration_prompt
+from .prompts import PromptBuilder
 
 
 # 환경변수 로드
@@ -25,6 +25,23 @@ class QuestGenerator:
     """
     Claude API를 사용한 퀘스트 생성기 클래스
     """
+
+    # API 호출 관련 상수
+    MODEL: str = "claude-sonnet-4-20250514"
+    MAX_TOKENS: int = 2000
+    TEMPERATURE: float = 1.0
+
+    # 퀘스트 검증 관련 상수
+    REQUIRED_FIELDS: List[str] = [
+        "quest_name",
+        "quest_type",
+        "difficulty",
+        "npc",
+        "objective",
+        "rewards",
+        "dialogue",
+    ]
+    NESTED_DICT_FIELDS: List[str] = ["npc", "objective", "rewards", "dialogue"]
 
     def __init__(self, api_key: Optional[str] = None):
         """
@@ -42,8 +59,7 @@ class QuestGenerator:
             )
 
         self.client = Anthropic(api_key=self.api_key)
-        self.model = "claude-sonnet-4-20250514"
-        logger.info("QuestGenerator 초기화 완료 (모델: %s)", self.model)
+        logger.info("QuestGenerator 초기화 완료 (모델: %s)", self.MODEL)
 
     def generate_quest(
         self,
@@ -69,29 +85,24 @@ class QuestGenerator:
         """
         response_text = ""
         try:
-            # 프롬프트 생성
-            prompt = create_quest_prompt(genre, theme, difficulty, quest_type)
+            prompt = PromptBuilder.create_quest_prompt(genre, theme, difficulty, quest_type)
             logger.info("퀘스트 생성 요청 - 장르: %s, 테마: %s, 난이도: %d, 타입: %s",
                         genre, theme, difficulty, quest_type)
 
-            # Claude API 호출
             response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                temperature=1.0,
+                model=self.MODEL,
+                max_tokens=self.MAX_TOKENS,
+                temperature=self.TEMPERATURE,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
 
-            # 응답 텍스트 추출
             response_text = response.content[0].text
             logger.info("API 응답 수신 (길이: %d자)", len(response_text))
 
-            # JSON 파싱
             quest_data = self._parse_json_response(response_text)
 
-            # 메타데이터 추가
             quest_data["genre"] = genre
             quest_data["theme"] = theme
 
@@ -125,28 +136,23 @@ class QuestGenerator:
         """
         response_text = ""
         try:
-            # 재생성 프롬프트 생성
-            prompt = create_regeneration_prompt(original_quest, feedback)
+            prompt = PromptBuilder.create_regeneration_prompt(original_quest, feedback)
             logger.info("퀘스트 재생성 요청 - 원본: %s", original_quest.get("quest_name", ""))
 
-            # Claude API 호출
             response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                temperature=1.0,
+                model=self.MODEL,
+                max_tokens=self.MAX_TOKENS,
+                temperature=self.TEMPERATURE,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
 
-            # 응답 텍스트 추출
             response_text = response.content[0].text
             logger.info("재생성 API 응답 수신 (길이: %d자)", len(response_text))
 
-            # JSON 파싱
             quest_data = self._parse_json_response(response_text)
 
-            # 메타데이터 추가 (원본에서 가져오기)
             quest_data["genre"] = original_quest.get("genre", "")
             quest_data["theme"] = original_quest.get("theme", "")
 
@@ -209,28 +215,12 @@ class QuestGenerator:
         Returns:
             bool: 검증 통과 여부
         """
-        required_fields = [
-            "quest_name",
-            "quest_type",
-            "difficulty",
-            "npc",
-            "objective",
-            "rewards",
-            "dialogue"
-        ]
-
-        for field in required_fields:
+        for field in self.REQUIRED_FIELDS:
             if field not in quest_data:
                 return False
 
-        # 중첩 필드 검증
-        if not isinstance(quest_data.get("npc"), dict):
-            return False
-        if not isinstance(quest_data.get("objective"), dict):
-            return False
-        if not isinstance(quest_data.get("rewards"), dict):
-            return False
-        if not isinstance(quest_data.get("dialogue"), dict):
-            return False
+        for field in self.NESTED_DICT_FIELDS:
+            if not isinstance(quest_data.get(field), dict):
+                return False
 
         return True
