@@ -4,7 +4,10 @@
 Claude API에 전달할 프롬프트를 생성합니다.
 """
 
-from typing import Dict
+from typing import TYPE_CHECKING, Dict
+
+if TYPE_CHECKING:
+    from .models import QuestData
 
 
 class PromptBuilder:
@@ -12,7 +15,7 @@ class PromptBuilder:
     퀘스트 생성 프롬프트를 빌드하는 클래스.
 
     장르·타입 매핑을 클래스 상수로 관리하여 확장 시
-    이 클래스만 수정하면 앱 전체에 반영됩니다.
+    이 클래스만 수정하면 앱 전체에 반영됩니다 (OCP).
     """
 
     # 장르별 톤 가이드 (OCP: 장르 추가 시 이 상수만 수정)
@@ -33,7 +36,7 @@ class PromptBuilder:
         "반복": "repeatable",
     }
 
-    # 영어 → 한국어 타입 매핑 (UI 표시용, KO_TO_EN의 역방향)
+    # 영어 → 한국어 타입 매핑 (UI 표시용, KO_TO_EN의 역방향 자동 파생)
     QUEST_TYPE_EN_TO_KO: Dict[str, str] = {
         en: ko for ko, en in QUEST_TYPE_KO_TO_EN.items()
     }
@@ -111,29 +114,28 @@ class PromptBuilder:
 
     @classmethod
     def create_regeneration_prompt(
-        cls, original_quest: Dict, feedback: str = ""
+        cls, original_quest: "QuestData", feedback: str = ""
     ) -> str:
         """
         기존 퀘스트를 기반으로 재생성 프롬프트를 생성합니다.
 
         Args:
-            original_quest: 기존 퀘스트 데이터
+            original_quest: 기존 QuestData 객체
             feedback: 사용자 피드백 (선택사항)
 
         Returns:
             str: 재생성 프롬프트
         """
-        difficulty = original_quest.get("difficulty", 3)
-        quest_type_en = original_quest.get("quest_type", "main")
-
+        difficulty = original_quest.difficulty
+        quest_type_en = original_quest.quest_type
         feedback_section = f"\n사용자 요청사항: {feedback}\n" if feedback else ""
 
         return f"""당신은 게임 퀘스트 디자이너입니다.
 다음 퀘스트를 완전히 새로운 스토리와 내용으로 재생성해주세요.
 
 기존 퀘스트 정보 (난이도/타입은 유지, 나머지는 새롭게):
-- 이름: {original_quest.get('quest_name', '')}
-- 장르/테마: {original_quest.get('genre', '')} / {original_quest.get('theme', '')}
+- 이름: {original_quest.quest_name}
+- 장르/테마: {original_quest.genre} / {original_quest.theme}
 - 난이도: {difficulty}/5
 - 타입: {quest_type_en}
 {feedback_section}

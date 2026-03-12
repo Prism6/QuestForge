@@ -6,10 +6,15 @@ QuestForge - AI 퀘스트 생성기
 
 import os
 import logging
+from typing import Optional
+
 import streamlit as st
-from utils.quest_generator import QuestGenerator
+
 from utils.data_exporter import DataExporter
+from utils.llm_client import AnthropicLLMClient
+from utils.models import QuestData
 from utils.prompts import PromptBuilder
+from utils.quest_generator import QuestGenerator
 
 # 로깅 설정
 logging.basicConfig(
@@ -30,12 +35,8 @@ st.set_page_config(
 # 커스텀 CSS
 st.markdown("""
 <style>
-    /* 전체 배경 */
-    .main .block-container {
-        padding-top: 1.5rem;
-    }
+    .main .block-container { padding-top: 1.5rem; }
 
-    /* 퀘스트 미리보기 카드 */
     .quest-description-card {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border-left: 4px solid #e94560;
@@ -47,21 +48,14 @@ st.markdown("""
         line-height: 1.6;
     }
 
-    /* 난이도 색상 배지 */
     .diff-1 { color: #4caf50; font-weight: bold; }
     .diff-2 { color: #8bc34a; font-weight: bold; }
     .diff-3 { color: #ffc107; font-weight: bold; }
     .diff-4 { color: #ff5722; font-weight: bold; }
     .diff-5 { color: #f44336; font-weight: bold; }
 
-    /* 섹션 구분선 */
-    .section-divider {
-        border: none;
-        border-top: 1px solid #333;
-        margin: 1rem 0;
-    }
+    .section-divider { border: none; border-top: 1px solid #333; margin: 1rem 0; }
 
-    /* 퀘스트 타입 뱃지 */
     .quest-type-badge {
         display: inline-block;
         padding: 2px 10px;
@@ -78,12 +72,12 @@ st.markdown("""
 # 난이도 아이콘 상수
 DIFFICULTY_COLORS = {1: "🟢", 2: "🟡", 3: "🟠", 4: "🔴", 5: "💀"}
 
-# 사이드바 옵션 — PromptBuilder 상수에서 파생하여 단일 출처(Single Source of Truth) 유지
+# 사이드바 옵션 — PromptBuilder 상수에서 파생 (SSOT)
 GENRE_OPTIONS = list(PromptBuilder.GENRE_TONE_GUIDE.keys())
 QUEST_TYPE_OPTIONS = list(PromptBuilder.QUEST_TYPE_KO_TO_EN.keys())
 
 
-def init_session_state():
+def init_session_state() -> None:
     """세션 상태 초기화"""
     if "quest_history" not in st.session_state:
         st.session_state.quest_history = []
@@ -91,12 +85,13 @@ def init_session_state():
         st.session_state.current_quest = None
     if "generator" not in st.session_state:
         try:
-            # Streamlit Cloud Secrets에서 API 키 가져오기 시도
             api_key = st.secrets.get("ANTHROPIC_API_KEY", None)
             if not api_key:
-                # 환경변수에서 가져오기
                 api_key = os.getenv("ANTHROPIC_API_KEY")
-            st.session_state.generator = QuestGenerator(api_key=api_key)
+
+            # DIP 적용: AnthropicLLMClient 를 QuestGenerator 에 주입
+            llm_client = AnthropicLLMClient(api_key=api_key)
+            st.session_state.generator = QuestGenerator(llm_client=llm_client)
             logger.info("QuestForge 앱 초기화 완료")
         except Exception as e:
             st.session_state.generator = None
@@ -104,28 +99,25 @@ def init_session_state():
             logger.error("QuestForge 초기화 실패: %s", str(e))
 
 
-def display_sidebar():
+def display_sidebar() -> dict:
     """사이드바 UI 렌더링"""
     with st.sidebar:
         st.title("🎯 QuestForge")
         st.markdown("**AI 퀘스트 생성기**")
         st.markdown("---")
 
-        # 장르 선택 — PromptBuilder.GENRE_TONE_GUIDE 키에서 자동 파생
         genre = st.selectbox(
             "📌 장르 선택",
             GENRE_OPTIONS,
             help="게임의 장르를 선택하세요"
         )
 
-        # 테마 입력
         theme = st.text_input(
             "📝 테마/세계관 입력",
             placeholder="예: 중세 판타지 왕국, 사이버펑크 도시",
             help="퀘스트의 배경이 되는 테마를 입력하세요"
         )
 
-        # 난이도 설정
         difficulty = st.slider(
             "⚔️ 난이도",
             min_value=1,
@@ -134,7 +126,6 @@ def display_sidebar():
             help="난이도가 높을수록 보상이 증가합니다"
         )
 
-        # 퀘스트 타입 — PromptBuilder.QUEST_TYPE_KO_TO_EN 키에서 자동 파생
         quest_type = st.selectbox(
             "📋 퀘스트 타입",
             QUEST_TYPE_OPTIONS,
@@ -142,31 +133,25 @@ def display_sidebar():
         )
 
         st.markdown("---")
-
-        # 생성 버튼
         generate_button = st.button(
             "🔮 퀘스트 생성하기",
             type="primary",
             use_container_width=True
         )
 
-        # 히스토리 영역
         st.markdown("---")
         st.markdown("### 📚 생성 히스토리")
 
         if st.session_state.quest_history:
             st.caption(f"총 {len(st.session_state.quest_history)}개 생성됨")
-
-            # 히스토리 목록 표시 (최근 5개만)
-            for i, quest in enumerate(reversed(st.session_state.quest_history[-5:])):
-                with st.expander(f"{quest.get('quest_name', '알 수 없는 퀘스트')}", expanded=False):
-                    st.write(f"**장르:** {quest.get('genre', '-')}")
-                    st.write(f"**난이도:** {quest.get('difficulty', 0)}/5")
-                    st.write(f"**타입:** {quest.get('quest_type', '-')}")
+            for quest in reversed(st.session_state.quest_history[-5:]):
+                with st.expander(quest.quest_name, expanded=False):
+                    st.write(f"**장르:** {quest.genre}")
+                    st.write(f"**난이도:** {quest.difficulty}/5")
+                    st.write(f"**타입:** {quest.quest_type}")
         else:
             st.caption("아직 생성된 퀘스트가 없습니다")
 
-        # 푸터
         st.markdown("---")
         st.caption("© 2025 한상범")
         st.caption("서강대학교 가상융합전문대학원")
@@ -177,102 +162,87 @@ def display_sidebar():
             "theme": theme,
             "difficulty": difficulty,
             "quest_type": quest_type,
-            "generate": generate_button
+            "generate": generate_button,
         }
 
 
-def display_quest(quest_data):
-    """퀘스트 데이터 표시"""
-    if not quest_data:
+def display_quest(quest: Optional[QuestData]) -> None:
+    """
+    퀘스트 데이터를 화면에 표시합니다.
+
+    Args:
+        quest: 표시할 QuestData 객체. None 이면 안내 메시지를 표시합니다.
+    """
+    if quest is None:
         st.info("👈 왼쪽 사이드바에서 조건을 설정하고 퀘스트를 생성해보세요!")
         return
 
-    # 퀘스트 헤더
-    diff = quest_data.get("difficulty", 0)
-    diff_icon = DIFFICULTY_COLORS.get(diff, "⭐")
-    st.header(f"🎯 {quest_data.get('quest_name', '퀘스트 이름 없음')}")
+    diff_icon = DIFFICULTY_COLORS.get(quest.difficulty, "⭐")
+    st.header(f"🎯 {quest.quest_name}")
 
-    # 퀘스트 미리보기 (description)
-    description = quest_data.get("description", "")
-    if description:
+    if quest.description:
         st.markdown(
-            f'<div class="quest-description-card">📖 {description}</div>',
+            f'<div class="quest-description-card">📖 {quest.description}</div>',
             unsafe_allow_html=True
         )
 
-    # 기본 정보
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("장르", quest_data.get("genre", "-"))
+        st.metric("장르", quest.genre or "-")
     with col2:
-        quest_type_en = quest_data.get("quest_type", "-")
-        # PromptBuilder.QUEST_TYPE_EN_TO_KO 사용 (중복 딕셔너리 제거)
-        quest_type_display = PromptBuilder.QUEST_TYPE_EN_TO_KO.get(quest_type_en, quest_type_en)
+        quest_type_display = PromptBuilder.QUEST_TYPE_EN_TO_KO.get(quest.quest_type, quest.quest_type)
         st.metric("타입", quest_type_display)
     with col3:
-        difficulty_stars = f"{diff_icon} {'★' * diff}{'☆' * (5 - diff)}"
+        difficulty_stars = f"{diff_icon} {'★' * quest.difficulty}{'☆' * (5 - quest.difficulty)}"
         st.metric("난이도", difficulty_stars)
     with col4:
-        st.metric("보상 골드", f"{quest_data.get('rewards', {}).get('gold', 0):,}")
+        st.metric("보상 골드", f"{quest.rewards.gold:,}")
 
     st.markdown("---")
 
-    # NPC 정보
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("💬 NPC 정보")
-        npc = quest_data.get("npc", {})
-        st.write(f"**이름:** {npc.get('name', '-')}")
-        st.write(f"**위치:** {npc.get('location', '-')}")
+        st.write(f"**이름:** {quest.npc.name}")
+        st.write(f"**위치:** {quest.npc.location}")
 
     with col2:
         st.subheader("🎯 목표")
-        objective = quest_data.get("objective", {})
-        st.write(f"**유형:** {objective.get('type', '-')}")
-        st.write(f"**대상:** {objective.get('target', '-')}")
-        st.write(f"**장소:** {objective.get('location', '-')}")
-        if objective.get('count'):
-            st.write(f"**수량:** {objective.get('count')}")
+        st.write(f"**유형:** {quest.objective.type}")
+        st.write(f"**대상:** {quest.objective.target}")
+        st.write(f"**장소:** {quest.objective.location}")
+        if quest.objective.count:
+            st.write(f"**수량:** {quest.objective.count}")
 
     st.markdown("---")
 
-    # 보상 정보
     st.subheader("💰 보상")
-    rewards = quest_data.get("rewards", {})
     reward_col1, reward_col2, reward_col3 = st.columns(3)
     with reward_col1:
-        st.write(f"**골드:** {rewards.get('gold', 0):,}")
+        st.write(f"**골드:** {quest.rewards.gold:,}")
     with reward_col2:
-        st.write(f"**경험치:** {rewards.get('exp', 0):,}")
+        st.write(f"**경험치:** {quest.rewards.exp:,}")
     with reward_col3:
-        items = rewards.get('items', [])
-        if items:
-            st.write(f"**아이템:** {', '.join(items)}")
+        if quest.rewards.items:
+            st.write(f"**아이템:** {', '.join(quest.rewards.items)}")
         else:
             st.write("**아이템:** 없음")
 
     st.markdown("---")
 
-    # 대사
     st.subheader("💭 대사")
-    dialogue = quest_data.get("dialogue", {})
-
     with st.expander("📜 수락 대사", expanded=True):
-        st.write(dialogue.get("accept", "-"))
-
+        st.write(quest.dialogue.accept)
     with st.expander("🔄 진행 중 대사"):
-        st.write(dialogue.get("progress", "-"))
-
+        st.write(quest.dialogue.progress)
     with st.expander("✅ 완료 대사"):
-        st.write(dialogue.get("complete", "-"))
+        st.write(quest.dialogue.complete)
 
 
-def main():
+def main() -> None:
     """메인 애플리케이션"""
-    # 세션 상태 초기화
     init_session_state()
 
-    # 초기화 에러 체크
     if st.session_state.generator is None:
         st.error("⚠️ QuestForge 초기화 실패")
         st.error(st.session_state.get("init_error", "알 수 없는 오류"))
@@ -285,92 +255,76 @@ def main():
         """)
         return
 
-    # 사이드바 렌더링
     sidebar_data = display_sidebar()
 
-    # 퀘스트 생성 로직
     if sidebar_data["generate"]:
         if not sidebar_data["theme"]:
             st.warning("⚠️ 테마/세계관을 입력해주세요!")
         else:
             with st.spinner("🔮 퀘스트를 생성하는 중..."):
                 try:
-                    quest_data = st.session_state.generator.generate_quest(
+                    quest = st.session_state.generator.generate_quest(
                         genre=sidebar_data["genre"],
                         theme=sidebar_data["theme"],
                         difficulty=sidebar_data["difficulty"],
-                        quest_type=sidebar_data["quest_type"]
+                        quest_type=sidebar_data["quest_type"],
                     )
-
-                    if st.session_state.generator.validate_quest_data(quest_data):
-                        quest_id = f"Q{len(st.session_state.quest_history) + 1:03d}"
-                        quest_data["quest_id"] = quest_id
-
-                        st.session_state.current_quest = quest_data
-                        st.session_state.quest_history.append(quest_data)
-
-                        st.success("✅ 퀘스트 생성 완료!")
-                    else:
-                        st.error("⚠️ 생성된 퀘스트 데이터가 올바르지 않습니다.")
+                    quest.quest_id = f"Q{len(st.session_state.quest_history) + 1:03d}"
+                    st.session_state.current_quest = quest
+                    st.session_state.quest_history.append(quest)
+                    st.success("✅ 퀘스트 생성 완료!")
 
                 except Exception as e:
                     st.error(f"❌ 퀘스트 생성 실패: {str(e)}")
 
-    # 메인 영역
     st.title("QuestForge - AI 퀘스트 생성기")
     st.markdown("게임 기획자를 위한 AI 기반 퀘스트 자동 생성 도구")
     st.markdown("---")
 
-    # 퀘스트 표시
     if st.session_state.current_quest:
         display_quest(st.session_state.current_quest)
-
         st.markdown("---")
 
-        # 액션 버튼들
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             json_data, json_filename, json_mime = DataExporter.create_download_data(
-                [st.session_state.current_quest],
-                "json"
+                [st.session_state.current_quest], "json"
             )
             st.download_button(
                 label="📥 JSON 다운로드",
                 data=json_data,
                 file_name=json_filename,
                 mime=json_mime,
-                use_container_width=True
+                use_container_width=True,
             )
 
         with col2:
             if st.session_state.quest_history:
                 excel_data, excel_filename, excel_mime = DataExporter.create_download_data(
-                    st.session_state.quest_history,
-                    "excel"
+                    st.session_state.quest_history, "excel"
                 )
                 st.download_button(
                     label="📥 Excel 다운로드 (전체)",
                     data=excel_data,
                     file_name=excel_filename,
                     mime=excel_mime,
-                    use_container_width=True
+                    use_container_width=True,
                 )
 
         with col3:
             if st.button("🔄 재생성", use_container_width=True):
                 with st.spinner("🔮 퀘스트를 재생성하는 중..."):
                     try:
-                        regenerated_quest = st.session_state.generator.regenerate_quest(
+                        regenerated = st.session_state.generator.regenerate_quest(
                             st.session_state.current_quest
                         )
+                        regenerated.quest_id = st.session_state.current_quest.quest_id
 
-                        regenerated_quest["quest_id"] = st.session_state.current_quest.get("quest_id")
-                        st.session_state.current_quest = regenerated_quest
-
-                        for i, quest in enumerate(st.session_state.quest_history):
-                            if quest.get("quest_id") == regenerated_quest.get("quest_id"):
-                                st.session_state.quest_history[i] = regenerated_quest
+                        st.session_state.current_quest = regenerated
+                        for i, q in enumerate(st.session_state.quest_history):
+                            if q.quest_id == regenerated.quest_id:
+                                st.session_state.quest_history[i] = regenerated
                                 break
 
                         st.success("✅ 퀘스트 재생성 완료!")

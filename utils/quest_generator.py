@@ -1,73 +1,51 @@
 """
 퀘스트 생성기 모듈
 
-Claude API를 사용하여 퀘스트를 생성합니다.
+LLMClient 인터페이스를 주입받아 퀘스트를 생성합니다.
+구체적인 LLM 공급자(Anthropic 등)와 완전히 분리됩니다 (DIP).
 """
 
-import os
-import re
 import json
 import logging
-from typing import Dict, List, Optional
-from anthropic import Anthropic
+import re
+from typing import Dict
+
 from dotenv import load_dotenv
+
+from .llm_client import LLMClient
+from .models import QuestData
+from .prompts import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
-from .prompts import PromptBuilder
-
-
-# 환경변수 로드
 load_dotenv()
 
 
 class QuestGenerator:
     """
-    Claude API를 사용한 퀘스트 생성기 클래스
+    LLMClient 를 사용한 퀘스트 생성기.
+
+    LLMClient 인터페이스에만 의존하므로 API 공급자를 교체해도
+    이 클래스를 수정할 필요가 없습니다 (DIP, OCP).
     """
 
-    # API 호출 관련 상수
-    MODEL: str = "claude-sonnet-4-20250514"
-    MAX_TOKENS: int = 2000
-    TEMPERATURE: float = 1.0
-
-    # 퀘스트 검증 관련 상수
-    REQUIRED_FIELDS: List[str] = [
-        "quest_name",
-        "quest_type",
-        "difficulty",
-        "npc",
-        "objective",
-        "rewards",
-        "dialogue",
-    ]
-    NESTED_DICT_FIELDS: List[str] = ["npc", "objective", "rewards", "dialogue"]
-
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, llm_client: LLMClient):
         """
-        QuestGenerator 초기화
+        QuestGenerator 초기화.
 
         Args:
-            api_key: Anthropic API 키 (없으면 환경변수에서 로드)
+            llm_client: LLMClient 구현체 (의존성 주입)
         """
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "API 키가 설정되지 않았습니다. "
-                ".env 파일에 ANTHROPIC_API_KEY를 설정하거나 "
-                "Streamlit Secrets에 등록해주세요."
-            )
-
-        self.client = Anthropic(api_key=self.api_key)
-        logger.info("QuestGenerator 초기화 완료 (모델: %s)", self.MODEL)
+        self._llm_client = llm_client
+        logger.info("QuestGenerator 초기화 완료")
 
     def generate_quest(
         self,
         genre: str,
         theme: str,
         difficulty: int,
-        quest_type: str
-    ) -> Dict:
+        quest_type: str,
+    ) -> QuestData:
         """
         새로운 퀘스트를 생성합니다.
 
@@ -78,106 +56,83 @@ class QuestGenerator:
             quest_type: 퀘스트 타입 (메인/서브/일일/반복)
 
         Returns:
-            Dict: 생성된 퀘스트 데이터
+            QuestData: 생성된 퀘스트 도메인 객체
 
         Raises:
-            Exception: API 호출 실패 또는 JSON 파싱 실패 시
+            ValueError: 응답에서 필수 필드를 파싱하지 못한 경우
+            Exception: API 호출 실패 시
         """
-        response_text = ""
         try:
             prompt = PromptBuilder.create_quest_prompt(genre, theme, difficulty, quest_type)
-            logger.info("퀘스트 생성 요청 - 장르: %s, 테마: %s, 난이도: %d, 타입: %s",
-                        genre, theme, difficulty, quest_type)
-
-            response = self.client.messages.create(
-                model=self.MODEL,
-                max_tokens=self.MAX_TOKENS,
-                temperature=self.TEMPERATURE,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+            logger.info(
+                "퀘스트 생성 요청 - 장르: %s, 테마: %s, 난이도: %d, 타입: %s",
+                genre, theme, difficulty, quest_type,
             )
 
-            response_text = response.content[0].text
+            response_text = self._llm_client.complete(prompt)
             logger.info("API 응답 수신 (길이: %d자)", len(response_text))
 
-            quest_data = self._parse_json_response(response_text)
+            raw = self._parse_json_response(response_text)
+            raw["genre"] = genre
+            raw["theme"] = theme
 
-            quest_data["genre"] = genre
-            quest_data["theme"] = theme
+            quest = QuestData.from_dict(raw)
+            logger.info("퀘스트 생성 성공: %s", quest.quest_name)
+            return quest
 
-            logger.info("퀘스트 생성 성공: %s", quest_data.get("quest_name", ""))
-            return quest_data
-
-        except json.JSONDecodeError as e:
-            logger.error("JSON 파싱 실패: %s\n응답: %s", str(e), response_text[:200])
-            raise Exception(f"JSON 파싱 실패: {str(e)}\n응답: {response_text}")
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.error("퀘스트 데이터 파싱 실패: %s", str(e))
+            raise
         except Exception as e:
             logger.error("퀘스트 생성 실패: %s", str(e))
-            raise Exception(f"퀘스트 생성 실패: {str(e)}")
+            raise Exception(f"퀘스트 생성 실패: {str(e)}") from e
 
     def regenerate_quest(
         self,
-        original_quest: Dict,
-        feedback: str = ""
-    ) -> Dict:
+        original_quest: QuestData,
+        feedback: str = "",
+    ) -> QuestData:
         """
         기존 퀘스트를 재생성합니다.
 
         Args:
-            original_quest: 기존 퀘스트 데이터
+            original_quest: 기존 QuestData 객체
             feedback: 사용자 피드백
 
         Returns:
-            Dict: 재생성된 퀘스트 데이터
-
-        Raises:
-            Exception: API 호출 실패 또는 JSON 파싱 실패 시
+            QuestData: 재생성된 퀘스트 도메인 객체
         """
-        response_text = ""
         try:
             prompt = PromptBuilder.create_regeneration_prompt(original_quest, feedback)
-            logger.info("퀘스트 재생성 요청 - 원본: %s", original_quest.get("quest_name", ""))
+            logger.info("퀘스트 재생성 요청 - 원본: %s", original_quest.quest_name)
 
-            response = self.client.messages.create(
-                model=self.MODEL,
-                max_tokens=self.MAX_TOKENS,
-                temperature=self.TEMPERATURE,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-
-            response_text = response.content[0].text
+            response_text = self._llm_client.complete(prompt)
             logger.info("재생성 API 응답 수신 (길이: %d자)", len(response_text))
 
-            quest_data = self._parse_json_response(response_text)
+            raw = self._parse_json_response(response_text)
+            raw["genre"] = original_quest.genre
+            raw["theme"] = original_quest.theme
 
-            quest_data["genre"] = original_quest.get("genre", "")
-            quest_data["theme"] = original_quest.get("theme", "")
+            quest = QuestData.from_dict(raw)
+            logger.info("퀘스트 재생성 성공: %s", quest.quest_name)
+            return quest
 
-            logger.info("퀘스트 재생성 성공: %s", quest_data.get("quest_name", ""))
-            return quest_data
-
-        except json.JSONDecodeError as e:
-            logger.error("재생성 JSON 파싱 실패: %s\n응답: %s", str(e), response_text[:200])
-            raise Exception(f"JSON 파싱 실패: {str(e)}\n응답: {response_text}")
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.error("재생성 데이터 파싱 실패: %s", str(e))
+            raise
         except Exception as e:
             logger.error("퀘스트 재생성 실패: %s", str(e))
-            raise Exception(f"퀘스트 재생성 실패: {str(e)}")
+            raise Exception(f"퀘스트 재생성 실패: {str(e)}") from e
 
     def _parse_json_response(self, response_text: str) -> Dict:
         """
         Claude 응답에서 JSON을 추출하고 파싱합니다.
 
-        응답에 마크다운 코드 블록이나 부가 설명이 포함되어 있어도
-        JSON 객체를 정확히 추출합니다.
-
         Args:
-            response_text: Claude API 응답 텍스트
+            response_text: LLM API 응답 텍스트
 
         Returns:
-            Dict: 파싱된 JSON 데이터
+            Dict: 파싱된 JSON 딕셔너리
 
         Raises:
             json.JSONDecodeError: JSON 파싱 실패 시
@@ -196,7 +151,7 @@ class QuestGenerator:
         text = re.sub(r'\s*```$', '', text)
         text = text.strip()
 
-        # 3차: 앞뒤 텍스트를 제거하고 JSON 객체 범위만 추출
+        # 3차: JSON 객체 범위만 추출
         start = text.find('{')
         end = text.rfind('}')
         if start != -1 and end != -1 and end > start:
@@ -204,23 +159,3 @@ class QuestGenerator:
             logger.debug("텍스트에서 JSON 객체 범위 추출 (start=%d, end=%d)", start, end)
 
         return json.loads(text)
-
-    def validate_quest_data(self, quest_data: Dict) -> bool:
-        """
-        퀘스트 데이터의 필수 필드를 검증합니다.
-
-        Args:
-            quest_data: 검증할 퀘스트 데이터
-
-        Returns:
-            bool: 검증 통과 여부
-        """
-        for field in self.REQUIRED_FIELDS:
-            if field not in quest_data:
-                return False
-
-        for field in self.NESTED_DICT_FIELDS:
-            if not isinstance(quest_data.get(field), dict):
-                return False
-
-        return True
