@@ -5,6 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-red)
 ![Claude](https://img.shields.io/badge/Claude-Sonnet--4-purple)
+![Tests](https://img.shields.io/badge/Tests-30%20passed-brightgreen)
 
 ## 📋 프로젝트 소개
 
@@ -76,25 +77,34 @@ streamlit run app.py
 ### 3. 재생성 및 관리
 
 - **재생성**: 같은 조건으로 새로운 퀘스트 생성
-- **히스토리**: 왼쪽 사이드바에서 이전 퀘스트 확인
+- **히스토리**: 왼쪽 사이드바에서 이전 퀘스트 확인 (최근 5개)
 - **초기화**: 히스토리 전체 삭제
 
 ## 📁 프로젝트 구조
 
 ```
 QuestForge/
-├── app.py                      # Streamlit 메인 앱
+├── app.py                       # Streamlit 메인 앱
 ├── utils/
-│   ├── __init__.py
-│   ├── quest_generator.py      # Claude API 호출 로직
-│   ├── data_exporter.py        # JSON/Excel 내보내기
-│   └── prompts.py              # 프롬프트 템플릿
-├── requirements.txt            # 의존성 목록
-├── .env.example                # 환경변수 예제
-├── .gitignore                  # Git 제외 파일
-├── CLAUDE.md                   # 프로젝트 가이드
-├── QuestForge_GDD.md           # 게임 디자인 문서
-└── README.md                   # 본 문서
+│   ├── __init__.py              # 패키지 공개 API (__all__)
+│   ├── exceptions.py            # 커스텀 예외 계층
+│   ├── models.py                # 퀘스트 도메인 모델 (QuestData, QuestType 등)
+│   ├── llm_client.py            # LLMClient 추상 인터페이스 (ABC)
+│   ├── anthropic_client.py      # AnthropicLLMClient 구현체
+│   ├── quest_generator.py       # 퀘스트 생성 로직
+│   ├── prompts.py               # 프롬프트 템플릿 (PromptBuilder)
+│   ├── export_strategy.py       # 내보내기 전략 (JSON/Excel)
+│   └── data_exporter.py         # 전략 레지스트리 디스패처
+├── tests/
+│   ├── test_models.py           # QuestData 유닛 테스트
+│   ├── test_quest_generator.py  # QuestGenerator 유닛 테스트
+│   └── test_export_strategy.py  # ExportStrategy 유닛 테스트
+├── requirements.txt             # 의존성 목록
+├── .env.example                 # 환경변수 예제
+├── .gitignore                   # Git 제외 파일
+├── CLAUDE.md                    # 프로젝트 가이드
+├── QuestForge_GDD.md            # 게임 디자인 문서
+└── README.md                    # 본 문서
 ```
 
 ## 🛠️ 기술 스택
@@ -107,6 +117,52 @@ QuestForge/
 | 데이터 처리 | Pandas |
 | 파일 변환 | openpyxl |
 | 환경변수 | python-dotenv |
+| 테스트 | pytest |
+
+## 🏗️ 아키텍처
+
+객체지향 설계 원칙(SOLID)을 적용한 모듈 구조입니다.
+
+```
+app.py
+  └─ QuestGenerator ◄── LLMClient (ABC)  ◄── AnthropicLLMClient
+       │                                          (DIP: 인터페이스 주입)
+       └─ PromptBuilder      QuestData / QuestType
+                              (도메인 모델, Enum)
+
+DataExporter
+  └─ ExportStrategy (ABC)
+       ├─ JsonExportStrategy
+       └─ ExcelExportStrategy   (Strategy 패턴, OCP)
+```
+
+| 파일 | 역할 | 적용 원칙 |
+|------|------|-----------|
+| `llm_client.py` | LLMClient ABC | DIP — 인터페이스만 정의, 외부 라이브러리 의존 없음 |
+| `anthropic_client.py` | Anthropic 구현체 | SRP — 구현체를 인터페이스에서 분리 |
+| `models.py` | 도메인 모델 | 타입 안전성 — `QuestType(str, Enum)`, `__post_init__` 검증 |
+| `exceptions.py` | 커스텀 예외 | LSP — 예외 계층 상속, 의미 있는 예외 타입 분리 |
+| `export_strategy.py` | 내보내기 전략 | OCP + 다형성 — 새 포맷 추가 시 기존 코드 무수정 |
+| `prompts.py` | 프롬프트 빌더 | OCP + SSOT — 장르/타입 추가 시 상수만 수정 |
+
+### 예외 계층
+
+```
+QuestForgeError
+├── QuestValidationError  — 필드 누락, 값 범위 오류
+├── QuestGenerationError  — API 호출, 네트워크 오류
+└── QuestParseError       — JSON 파싱 오류
+```
+
+## 🧪 테스트 실행
+
+```bash
+pytest tests/ -v
+```
+
+총 30개 테스트 (test_models 13개 · test_quest_generator 7개 · test_export_strategy 10개)
+
+`QuestGenerator` 테스트는 Mock LLMClient를 사용하므로 실제 API 키 없이 실행됩니다.
 
 ## 📊 생성되는 퀘스트 데이터 구조
 
@@ -118,6 +174,7 @@ QuestForge/
   "difficulty": 3,
   "genre": "RPG",
   "theme": "중세 판타지 왕국",
+  "description": "왕국의 황금 왕관이 도적단에 탈취당했다...",
   "npc": {
     "name": "왕실 기사단장 로빈",
     "location": "왕성 대전"
@@ -163,16 +220,6 @@ ANTHROPIC_API_KEY = "your_api_key_here"
 ### 3. 배포
 
 자동으로 빌드 및 배포가 진행됩니다.
-
-## 🤝 기여하기
-
-기여를 환영합니다! 이슈를 등록하거나 Pull Request를 보내주세요.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'feat: Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ## 📝 커밋 컨벤션
 
