@@ -6,6 +6,8 @@ Claude API에 전달할 프롬프트를 생성합니다.
 
 from typing import TYPE_CHECKING, Dict
 
+from .models import QuestType
+
 if TYPE_CHECKING:
     from .models import QuestData
 
@@ -28,17 +30,17 @@ class PromptBuilder:
         "로그라이크": "절차적 생성 느낌, 간결한 설명, 높은 위험/높은 보상",
     }
 
-    # 한국어 → 영어 타입 매핑
-    QUEST_TYPE_KO_TO_EN: Dict[str, str] = {
-        "메인": "main",
-        "서브": "sub",
-        "일일": "daily",
-        "반복": "repeatable",
+    # 한국어 → QuestType 매핑 (UI 입력값 → 도메인 타입)
+    QUEST_TYPE_KO_TO_EN: Dict[str, QuestType] = {
+        "메인": QuestType.MAIN,
+        "서브": QuestType.SUB,
+        "일일": QuestType.DAILY,
+        "반복": QuestType.REPEATABLE,
     }
 
-    # 영어 → 한국어 타입 매핑 (UI 표시용, KO_TO_EN의 역방향 자동 파생)
-    QUEST_TYPE_EN_TO_KO: Dict[str, str] = {
-        en: ko for ko, en in QUEST_TYPE_KO_TO_EN.items()
+    # QuestType → 한국어 매핑 (UI 표시용, KO_TO_EN의 역방향 자동 파생)
+    QUEST_TYPE_EN_TO_KO: Dict[QuestType, str] = {
+        qt: ko for ko, qt in QUEST_TYPE_KO_TO_EN.items()
     }
 
     @classmethod

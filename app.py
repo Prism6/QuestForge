@@ -10,8 +10,9 @@ from typing import Optional
 
 import streamlit as st
 
+from utils.anthropic_client import AnthropicLLMClient
 from utils.data_exporter import DataExporter
-from utils.llm_client import AnthropicLLMClient
+from utils.exceptions import QuestForgeError
 from utils.models import QuestData
 from utils.prompts import PromptBuilder
 from utils.quest_generator import QuestGenerator
@@ -274,7 +275,7 @@ def main() -> None:
                     st.session_state.quest_history.append(quest)
                     st.success("✅ 퀘스트 생성 완료!")
 
-                except Exception as e:
+                except QuestForgeError as e:
                     st.error(f"❌ 퀘스트 생성 실패: {str(e)}")
 
     st.title("QuestForge - AI 퀘스트 생성기")
@@ -330,7 +331,7 @@ def main() -> None:
                         st.success("✅ 퀘스트 재생성 완료!")
                         st.rerun()
 
-                    except Exception as e:
+                    except QuestForgeError as e:
                         st.error(f"❌ 재생성 실패: {str(e)}")
 
         with col4:

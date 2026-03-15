@@ -12,6 +12,7 @@ from typing import Dict
 
 from dotenv import load_dotenv
 
+from .exceptions import QuestGenerationError, QuestParseError, QuestValidationError
 from .llm_client import LLMClient
 from .models import QuestData
 from .prompts import PromptBuilder
@@ -80,12 +81,15 @@ class QuestGenerator:
             logger.info("퀘스트 생성 성공: %s", quest.quest_name)
             return quest
 
-        except (ValueError, json.JSONDecodeError) as e:
-            logger.error("퀘스트 데이터 파싱 실패: %s", str(e))
+        except QuestValidationError as e:
+            logger.error("퀘스트 데이터 검증 실패: %s", str(e))
             raise
+        except json.JSONDecodeError as e:
+            logger.error("퀘스트 JSON 파싱 실패: %s", str(e))
+            raise QuestParseError(f"퀘스트 JSON 파싱 실패: {e}") from e
         except Exception as e:
             logger.error("퀘스트 생성 실패: %s", str(e))
-            raise Exception(f"퀘스트 생성 실패: {str(e)}") from e
+            raise QuestGenerationError(f"퀘스트 생성 실패: {e}") from e
 
     def regenerate_quest(
         self,
@@ -117,12 +121,15 @@ class QuestGenerator:
             logger.info("퀘스트 재생성 성공: %s", quest.quest_name)
             return quest
 
-        except (ValueError, json.JSONDecodeError) as e:
-            logger.error("재생성 데이터 파싱 실패: %s", str(e))
+        except QuestValidationError as e:
+            logger.error("재생성 데이터 검증 실패: %s", str(e))
             raise
+        except json.JSONDecodeError as e:
+            logger.error("재생성 JSON 파싱 실패: %s", str(e))
+            raise QuestParseError(f"재생성 JSON 파싱 실패: {e}") from e
         except Exception as e:
             logger.error("퀘스트 재생성 실패: %s", str(e))
-            raise Exception(f"퀘스트 재생성 실패: {str(e)}") from e
+            raise QuestGenerationError(f"퀘스트 재생성 실패: {e}") from e
 
     def _parse_json_response(self, response_text: str) -> Dict:
         """
